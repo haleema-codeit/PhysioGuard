@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="https://unpkg.com/streamlit-component-lib@1.5.0/dist/index.js"></script>
+  <style>
+    :root { --ink:#18212b; --muted:#6b7280; --line:#d7dce2; --paper:#fbfaf7; --dark:#0b1220; --cyan:#22d3ee; --red:#ef4444; }
+    * { box-sizing:border-box; }
+    body { margin:0; padding:0; background:transparent; color:var(--ink); font-family:Inter,ui-sans-serif,system-ui,-apple-system,sans-serif; }
+    .lab { border:1px solid var(--line); border-radius:22px; padding:20px; background:linear-gradient(145deg,#fffdf9,#f3f0ea); box-shadow:0 14px 36px rgba(27,32,40,.10); }
+    .tabs { display:flex; gap:8px; margin-bottom:14px; padding:4px; border:1px solid var(--line); border-radius:12px; background:rgba(255,255,255,.62); }
+    .tab { flex:1; border:0; background:transparent; color:var(--muted); }
+    .tab.active { background:#121c2c; color:#fff; }
+    .panel-note { margin:0 0 12px; color:var(--muted); font-size:13px; }
+    .hidden { display:none !important; }
+    .stage { position:relative; overflow:hidden; min-height:310px; border-radius:16px; background:var(--dark); display:flex; align-items:center; justify-content:center; }
+    video { display:block; width:100%; max-height:440px; object-fit:contain; background:#05080f; }
+    .empty { color:#99a6b7; text-align:center; padding:72px 20px; }
+    .empty b { display:block; color:#edf5ff; font-size:1.1rem; margin-bottom:8px; }
+    .live { position:absolute; top:14px; left:14px; z-index:2; display:none; color:#fff; background:rgba(5,8,15,.75); padding:7px 10px; border-radius:999px; font:600 12px ui-monospace,monospace; letter-spacing:.08em; }
+    .live.active { display:block; }
+    .live i { display:inline-block; width:8px; height:8px; margin-right:7px; border-radius:50%; background:var(--red); box-shadow:0 0 12px var(--red); animation:pulse 1.2s infinite; }
+    .controls { display:flex; flex-wrap:wrap; gap:8px; margin-top:14px; }
+    button, .file-label { border:1px solid #cbd2da; background:#fff; color:var(--ink); border-radius:10px; padding:10px 13px; cursor:pointer; font:600 13px Inter, sans-serif; transition:.16s ease; }
+    button:hover, .file-label:hover { border-color:#65758a; transform:translateY(-1px); }
+    button.primary { background:#121c2c; color:#fff; border-color:#121c2c; }
+    button.danger { color:#a8202a; }
+    button:focus-visible, .file-label:focus-visible { outline:3px solid rgba(34,211,238,.45); outline-offset:2px; }
+    button[disabled] { opacity:.45; cursor:not-allowed; transform:none; }
+    input[type=file] { display:none; }
+    .meta { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; color:var(--muted); font:12px ui-monospace,monospace; }
+    .pill { border:1px solid var(--line); border-radius:999px; padding:5px 8px; background:rgba(255,255,255,.7); }
+    .message { min-height:20px; color:var(--muted); font-size:13px; line-height:1.4; margin-top:10px; }
+    .message.error { color:#a8202a; }
+    .message.ok { color:#126b4a; }
+    @keyframes pulse { 50% { opacity:.35; transform:scale(.72); } }
+  </style>
+</head>
+<body>
+  <main class="lab" aria-label="Video Lab record and upload control">
+    <div class="tabs" role="tablist" aria-label="Video input mode">
+      <button class="tab active" id="tab-record" role="tab" aria-selected="true">Record Live Video</button>
+      <button class="tab" id="tab-upload" role="tab" aria-selected="false">Upload Existing Video</button>
+    </div>
+    <p class="panel-note" id="record-note">Enable your camera only when you are ready. Your browser will ask for camera and microphone permission.</p>
+    <p class="panel-note hidden" id="upload-note">Choose an existing video. It remains in browser memory until you click Analyze Video in the dashboard.</p>
+    <div class="stage">
+      <div class="live" id="live"><i></i>RECORDING <span id="timer">00:00</span></div>
+      <div class="empty" id="empty"><b>Camera preview is inactive</b>Select Record with Camera or upload an existing clip.</div>
+      <video id="preview" playsinline muted controls hidden></video>
+    </div>
+    <div class="controls" id="camera-controls">
+      <button class="primary" id="enable">Enable Camera</button><button class="primary" id="record" disabled>Start Recording</button>
+      <button id="switch" disabled>Switch Camera</button>
+      <button id="pause" disabled>Pause</button><button id="resume" disabled>Resume</button><button id="stop" disabled>Stop</button><button class="primary" id="use" disabled>Use This Video</button>
+      <button class="danger" id="retake" disabled>Retake / Remove</button>
+    </div>
+    <div class="controls hidden" id="upload-controls">
+      <label class="file-label" for="file">Choose Video File</label><input id="file" type="file" accept="video/mp4,video/webm,video/quicktime,video/x-msvideo,.mp4,.webm,.mov,.avi,.mkv">
+      <button class="primary" id="upload-use" disabled>Use This Video</button><button class="danger" id="upload-remove" disabled>Remove</button>
+    </div>
+    <div class="meta" id="meta"></div>
+    <div class="message" id="message" role="status">Camera permission is requested only after you choose Record with Camera.</div>
+  </main>
+  <script>
+    const { Streamlit, isConnectionException } = window;
+    const enableButton = document.getElementById('enable'), recordButton = document.getElementById('record'), switchButton = document.getElementById('switch'), fileInput = document.getElementById('file'), useButton = document.getElementById('use'), uploadUseButton = document.getElementById('upload-use'), uploadRemoveButton = document.getElementById('upload-remove');
+    const pauseButton = document.getElementById('pause'), resumeButton = document.getElementById('resume'), stopButton = document.getElementById('stop'), retakeButton = document.getElementById('retake');
+    const preview = document.getElementById('preview'), empty = document.getElementById('empty'), live = document.getElementById('live'), timer = document.getElementById('timer'), meta = document.getElementById('meta'), message = document.getElementById('message');
+    const tabRecord = document.getElementById('tab-record'), tabUpload = document.getElementById('tab-upload'), cameraControls = document.getElementById('camera-controls'), uploadControls = document.getElementById('upload-controls'), recordNote = document.getElementById('record-note'), uploadNote = document.getElementById('upload-note');
+    let stream = null, recorder = null, chunks = [], objectUrl = null, timerId = null, startedAt = 0, storedBlob = null, lastPayload = null, currentDeviceId = null, currentMode = 'record', config = {max_bytes: 52428800, supported_extensions: ['.mp4','.webm','.mov']};
+
+    function send(value) { try { Streamlit.setComponentValue(value); } catch (e) {} }
+    function setMessage(text, kind='') { message.textContent = text; message.className = 'message ' + kind; }
+    function cleanupStream() { if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; } if (preview) preview.srcObject = null; }
+    function clearPreview() { if (objectUrl) URL.revokeObjectURL(objectUrl); objectUrl = null; preview.pause(); preview.srcObject = null; preview.removeAttribute('src'); preview.hidden = true; empty.hidden = false; storedBlob = null; lastPayload = null; meta.innerHTML=''; useButton.disabled=true; retakeButton.disabled=true; }
+    function formatBytes(n) { return n < 1048576 ? Math.round(n/1024)+' KB' : (n/1048576).toFixed(1)+' MB'; }
+    function formatTime(ms) { const s = Math.floor(ms/1000); return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0'); }
+    function stopTimer() { if(timerId) clearInterval(timerId); timerId=null; }
+    function resetButtons() { enableButton.disabled=false; recordButton.disabled=!stream; switchButton.disabled=!stream; pauseButton.disabled=true; resumeButton.disabled=true; stopButton.disabled=true; }
+    function showBlob(blob, filename, source) {
+      if(blob.size > config.max_bytes) { setMessage('This file exceeds the configured '+formatBytes(config.max_bytes)+' limit.', 'error'); return; }
+      const ext = '.' + (filename.split('.').pop() || '').toLowerCase();
+      if(!config.supported_extensions.includes(ext)) { setMessage('Unsupported video extension. Use MP4, WebM, MOV, AVI, or MKV when your browser can decode it.', 'error'); return; }
+      storedBlob = blob; clearPreview(); storedBlob = blob; objectUrl = URL.createObjectURL(blob); preview.src=objectUrl; preview.hidden=false; empty.hidden=true; preview.controls=true; retakeButton.disabled=false; uploadUseButton.disabled=false; uploadRemoveButton.disabled=false; resetButtons();
+      const duration = Number.isFinite(preview.duration) ? preview.duration : null;
+      meta.innerHTML = '<span class="pill">'+filename+'</span><span class="pill">'+formatBytes(blob.size)+'</span>' + (duration ? '<span class="pill">'+duration.toFixed(1)+'s</span>' : '') + '<span class="pill">'+source+'</span>';
+      setMessage('Preview ready. Click Use This Video, then Analyze Video in the dashboard.', 'ok');
+      const reader = new FileReader(); reader.onloadend = () => { const base64 = String(reader.result).split(',')[1] || ''; lastPayload={type:'video_selected', source, filename, mime_type:blob.type || 'video/webm', size:blob.size, duration, data:base64}; useButton.disabled=false; send(lastPayload); }; reader.readAsDataURL(blob);
+    }
+    function chooseMime() { return ['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm','video/mp4'].find(x => window.MediaRecorder && MediaRecorder.isTypeSupported(x)) || ''; }
+    async function requestCamera(deviceId=null) {
+      if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) { setMessage('This browser does not support camera recording. Try a current Chrome, Edge, or Firefox browser.', 'error'); return false; }
+      try {
+        cleanupStream();
+        const video = deviceId ? {deviceId:{exact:deviceId}} : {facingMode:'user'};
+        stream = await navigator.mediaDevices.getUserMedia({video:video, audio:true});
+        const track = stream.getVideoTracks()[0]; currentDeviceId = track && track.getSettings ? track.getSettings().deviceId : deviceId;
+        preview.srcObject = stream; preview.hidden=false; empty.hidden=true; preview.controls=false; await preview.play();
+        recordButton.disabled=false; switchButton.disabled=false; enableButton.textContent='Camera Enabled'; setMessage('Live preview ready. Start recording when you are ready.', 'ok');
+        return true;
+      } catch(e) { cleanupStream(); recordButton.disabled=true; switchButton.disabled=true; setMessage(e.name==='NotAllowedError'?'Camera or microphone permission was denied.':e.name==='NotFoundError'?'No camera or microphone was found.':'Unable to enable camera: '+e.message, 'error'); return false; }
+    }
+    async function startRecording() {
+      if(!stream) { setMessage('Click Enable Camera before starting a recording.', 'error'); return; }
+      try {
+        const mime = chooseMime(); recorder = mime ? new MediaRecorder(stream,{mimeType:mime}) : new MediaRecorder(stream); chunks=[]; recorder.ondataavailable=e=>{if(e.data.size) chunks.push(e.data);}; recorder.onerror=()=>setMessage('The browser could not record this stream.', 'error'); recorder.onstop=()=>{ stopTimer(); live.classList.remove('active'); cleanupStream(); const blob=new Blob(chunks,{type:recorder.mimeType || 'video/webm'}); const ext=blob.type.includes('mp4')?'.mp4':'.webm'; showBlob(blob,'recording-'+new Date().toISOString().replace(/[:.]/g,'-')+ext,'camera recording'); };
+        recorder.start(250); startedAt=Date.now(); timerId=setInterval(()=>timer.textContent=formatTime(Date.now()-startedAt),250); live.classList.add('active'); recordButton.disabled=true; pauseButton.disabled=false; stopButton.disabled=false; retakeButton.disabled=true; setMessage('Recording is active. Camera and microphone tracks stop when you stop or leave this page.', 'ok');
+      } catch(e) { cleanupStream(); setMessage(e.name==='NotAllowedError'?'Camera or microphone permission was denied.':e.name==='NotFoundError'?'No camera or microphone was found.':'Unable to start recording: '+e.message, 'error'); }
+    }
+    tabRecord.onclick=()=>{ currentMode='record'; tabRecord.classList.add('active'); tabUpload.classList.remove('active'); tabRecord.setAttribute('aria-selected','true'); tabUpload.setAttribute('aria-selected','false'); cameraControls.classList.remove('hidden'); uploadControls.classList.add('hidden'); recordNote.classList.remove('hidden'); uploadNote.classList.add('hidden'); setMessage(stream?'Live preview ready.':'Camera permission is requested only after you click Enable Camera.'); };
+    tabUpload.onclick=()=>{ currentMode='upload'; tabUpload.classList.add('active'); tabRecord.classList.remove('active'); tabUpload.setAttribute('aria-selected','true'); tabRecord.setAttribute('aria-selected','false'); cameraControls.classList.add('hidden'); uploadControls.classList.remove('hidden'); recordNote.classList.add('hidden'); uploadNote.classList.remove('hidden'); cleanupStream(); setMessage('Choose a local video file to preview it.'); };
+    enableButton.onclick=()=>requestCamera();
+    recordButton.onclick=()=>startRecording();
+    switchButton.onclick=async()=>{try{const devices=await navigator.mediaDevices.enumerateDevices(); const cameras=devices.filter(d=>d.kind==='videoinput'); if(cameras.length<2){setMessage('Only one camera is available.','error');return;} const index=Math.max(0,cameras.findIndex(d=>d.deviceId===currentDeviceId)); await requestCamera(cameras[(index+1)%cameras.length].deviceId);}catch(e){setMessage('Unable to switch camera: '+e.message,'error');}};
+    pauseButton.onclick=()=>{if(recorder && recorder.state==='recording'){recorder.pause(); pauseButton.disabled=true; resumeButton.disabled=false; setMessage('Recording paused.');}};
+    resumeButton.onclick=()=>{if(recorder && recorder.state==='paused'){recorder.resume(); pauseButton.disabled=false; resumeButton.disabled=true; setMessage('Recording resumed.','ok');}};
+    stopButton.onclick=()=>{if(recorder && recorder.state!=='inactive'){recorder.stop(); resetButtons();}};
+    useButton.onclick=()=>{if(lastPayload){send(lastPayload); setMessage('Video confirmed for analysis.','ok');}};
+    uploadUseButton.onclick=()=>{if(lastPayload){send(lastPayload); setMessage('Video confirmed for analysis.','ok');}};
+    uploadRemoveButton.onclick=()=>{clearPreview(); fileInput.value=''; send({type:'cleared'}); setMessage('Choose another video.');};
+    retakeButton.onclick=()=>{cleanupStream(); stopTimer(); clearPreview(); resetButtons(); setMessage('Ready for another recording or upload.'); send({type:'cleared'});};
+    fileInput.onchange=()=>{const file=fileInput.files && fileInput.files[0]; if(file) { cleanupStream(); showBlob(file,file.name,'uploaded file'); }};
+    window.addEventListener('beforeunload',()=>{cleanupStream(); stopTimer(); if(objectUrl) URL.revokeObjectURL(objectUrl);});
+    window.addEventListener('pagehide',()=>{cleanupStream(); stopTimer();});
+    if (Streamlit && Streamlit.events) {
+      Streamlit.events.addEventListener(Streamlit.RENDER_EVENT, event => { config=Object.assign(config,event.detail.args||{}); if(config.mode==='record'){ document.querySelector('.tabs').classList.add('hidden'); uploadControls.classList.add('hidden'); cameraControls.classList.remove('hidden'); recordNote.classList.remove('hidden'); uploadNote.classList.add('hidden'); } Streamlit.setFrameHeight(500); });
+      Streamlit.setComponentReady(); Streamlit.setFrameHeight(500);
+    } else {
+      document.body.style.minHeight='500px';
+      setMessage('The browser bridge is still loading. Refresh localhost if this message remains.', 'error');
+    }
+  </script>
+</body>
+</html>
